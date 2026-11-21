@@ -1,0 +1,48 @@
+{
+  "vendor": {
+    "id": "your-product",
+    "name": "Your Product",
+    "tagline": "Automated SDK & integration setup",
+    "docsUrl": "https://docs.example.com",
+    "llmsTxtUrl": "https://docs.example.com/llms.txt"
+  },
+  "provider": {
+    "kind": "openai",
+    "model": "gpt-5.4-mini",
+    "thinkingLevel": "medium"
+  },
+  "prompts": {
+    "system": "Integrate Your Product cleanly following the project's existing conventions. Keep edits minimal and verify the build passes.",
+    "extraRules": []
+  },
+  "skills": {
+    "sources": [
+      {
+        "type": "local",
+        "dir": "./skills"
+      }
+    ]
+  },
+  "mcp": {
+    "servers": [
+      {
+        "id": "your-product-mcp",
+        "name": "Your Product MCP",
+        "transport": "http",
+        "url": "https://mcp.example.com/mcp",
+        "installInEditors": true
+      }
+    ],
+    "installIntoEditors": true
+  },
+  "cli": {
+    "binary": "your-cli",
+    "installCommand": "npm install -g @your-org/cli",
+    "allowedSubcommands": ["init", "status"]
+  },
+  "security": {
+    "allowBash": true,
+    "extraBlockedPaths": [],
+    "allowedBashPrefixes": []
+  }
+}

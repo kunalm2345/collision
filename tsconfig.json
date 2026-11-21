@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/detect" },
+    { "path": "./packages/core" },
+    { "path": "./packages/tui" },
+    { "path": "./packages/cli" }
+  ]
+}
