@@ -3,6 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ProjectProfile } from '@collision/detect';
 import { installCommandFor } from '@collision/detect';
+import type {
+  ExtensionFactory,
+  ToolDefinition,
+} from '@earendil-works/pi-coding-agent';
 import type { CollisionConfig, TaskDefinition } from '../config.js';
 import type { AskUserHandler, CollisionEventHandler } from '../events.js';
 import type { ConnectedMcpTool } from '../mcp/client.js';
@@ -161,70 +165,46 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
 
   // Dynamic import keeps @collision/core light for non-runtime callers (tests, config inspection)
   const pi = await import('@earendil-works/pi-coding-agent');
-  const { Type } = await import('@sinclair/typebox').catch(() => ({
-    Type: null as unknown as Record<string, (...args: unknown[]) => unknown>,
-  }));
+  const { Type } = await import('@sinclair/typebox');
 
-  const { createAgentSession, DefaultResourceLoader, SessionManager, ModelRegistry } =
-    pi as unknown as {
-      createAgentSession: (opts: Record<string, unknown>) => Promise<{
-        session: {
-          prompt: (text: string) => Promise<void>;
-          getLastAssistantText: () => string;
-          subscribe: (fn: (ev: Record<string, unknown>) => void) => () => void;
-          dispose: () => void;
-          abort?: () => void;
-        };
-      }>;
-      DefaultResourceLoader: new (opts?: Record<string, unknown>) => unknown;
-      SessionManager: { inMemory: (cwd: string) => unknown };
-      ModelRegistry?: new () => {
-        registerProvider: (name: string, spec: Record<string, unknown>) => void;
-        find: (provider: string, id: string) => unknown;
-      };
-    };
-
-  const modelSpec = {
-    id: provider.modelId,
-    name: `${provider.modelId} (${provider.providerName})`,
-    api: provider.api,
-    provider: provider.providerName,
+  const modelRuntime = await pi.ModelRuntime.create({ refreshOnCreate: false });
+  modelRuntime.registerProvider(provider.providerName, {
     baseUrl: provider.baseUrl,
-    reasoning: false,
-    input: ['text' as const],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200_000,
-    maxTokens: 16_384,
+    apiKey: provider.apiKey,
+    api: provider.api as Parameters<typeof modelRuntime.registerProvider>[1]['api'],
     headers: provider.headers,
-  };
+    models: [
+      {
+        id: provider.modelId,
+        name: `${provider.modelId} (${provider.providerName})`,
+        api: provider.api as Parameters<typeof modelRuntime.registerProvider>[1]['api'],
+        reasoning: false,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 200_000,
+        maxTokens: 16_384,
+      },
+    ],
+  });
 
-  let modelRegistry: unknown;
-  if (ModelRegistry) {
-    const reg = new ModelRegistry();
-    reg.registerProvider(provider.providerName, {
-      baseUrl: provider.baseUrl,
-      apiKey: provider.apiKey,
-      api: provider.api,
-      headers: provider.headers,
-      models: [modelSpec],
-    });
-    modelRegistry = reg;
+  const model = modelRuntime.getModel(provider.providerName, provider.modelId);
+  if (!model) {
+    throw new Error(
+      `Failed to resolve model "${provider.modelId}" on provider "${provider.providerName}"`,
+    );
   }
 
-  const schemaObj = (properties: Record<string, unknown>, required: string[] = []) =>
-    Type
-      ? (Type as { Object: (p: unknown) => unknown }).Object(properties)
-      : { type: 'object', properties, required };
-
   // Collision-owned tools: skill loader, docs fetcher, env writer, ask_user, and auto-connected MCP tools
-  const customTools: Array<Record<string, unknown>> = [
+  const customTools: ToolDefinition[] = [
     {
       name: 'load_skill',
       label: 'Load Skill',
       description: 'Load a framework or integration markdown skill by id.',
-      parameters: schemaObj({ id: { type: 'string' } }, ['id']),
-      async execute(_id: string, params: { id: string }) {
-        onEvent({ type: 'tool_call', taskId: task.id, tool: 'load_skill', detail: params.id });
+      parameters: Type.Object({
+        id: Type.String({ description: 'Skill identifier from the Available Skills list' }),
+      }),
+      async execute(_id, rawParams) {
+        const params = rawParams as { id: string };
         const skill = await skills.get(params.id);
         if (!skill) {
           return {
@@ -242,9 +222,11 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
       name: 'fetch_doc',
       label: 'Fetch Documentation',
       description: 'Fetch vendor documentation or llms.txt from an allowlisted HTTPS URL.',
-      parameters: schemaObj({ url: { type: 'string' } }, ['url']),
-      async execute(_id: string, params: { url: string }) {
-        onEvent({ type: 'tool_call', taskId: task.id, tool: 'fetch_doc', detail: params.url });
+      parameters: Type.Object({
+        url: Type.String({ description: 'HTTPS documentation URL on an allowlisted vendor host' }),
+      }),
+      async execute(_id, rawParams) {
+        const params = rawParams as { url: string };
         const allowedHosts = new Set<string>();
         for (const u of [config.vendor.docsUrl, config.vendor.llmsTxtUrl, config.vendor.website]) {
           if (u) allowedHosts.add(new URL(u).host);
@@ -265,18 +247,12 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
       label: 'Set Environment Variables',
       description:
         'Write key/value pairs to a .env file locally. Accepts secret:<uuid> handles returned by ask_user.',
-      parameters: schemaObj(
-        {
-          file: { type: 'string', description: 'Target env file, e.g. .env.local' },
-          values: { type: 'object', additionalProperties: { type: 'string' } },
-        },
-        ['file', 'values'],
-      ),
-      async execute(
-        _id: string,
-        params: { file: string; values: Record<string, string> },
-      ) {
-        onEvent({ type: 'tool_call', taskId: task.id, tool: 'set_env_values', detail: params.file });
+      parameters: Type.Object({
+        file: Type.String({ description: 'Target env file, e.g. .env.local' }),
+        values: Type.Record(Type.String(), Type.String()),
+      }),
+      async execute(_id, rawParams) {
+        const params = rawParams as { file: string; values: Record<string, string> };
         const keys = upsertEnvFile(profile.projectDir, params.file, params.values, vault);
         return {
           content: [
@@ -294,14 +270,12 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
       label: 'Ask User',
       description:
         'Ask the user a clarifying question or request a secret value. Secret answers are returned as opaque secret:<uuid> handles.',
-      parameters: schemaObj(
-        {
-          question: { type: 'string' },
-          secret: { type: 'boolean' },
-        },
-        ['question'],
-      ),
-      async execute(_id: string, params: { question: string; secret?: boolean }) {
+      parameters: Type.Object({
+        question: Type.String({ description: 'Question to ask the user' }),
+        secret: Type.Optional(Type.Boolean({ description: 'Mask input and store in local secret vault' })),
+      }),
+      async execute(_id, rawParams) {
+        const params = rawParams as { question: string; secret?: boolean };
         if (!askUser) {
           return {
             content: [{ type: 'text', text: 'Non-interactive mode: proceed with sensible defaults.' }],
@@ -321,64 +295,109 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
       name: mcpTool.name,
       label: mcpTool.name,
       description: mcpTool.description,
-      parameters: mcpTool.inputSchema,
-      async execute(_id: string, params: Record<string, unknown>) {
-        onEvent({ type: 'tool_call', taskId: task.id, tool: mcpTool.name });
-        const raw = await mcpTool.call(params);
+      parameters: mcpTool.inputSchema as unknown as ToolDefinition['parameters'],
+      async execute(_id, params) {
+        const raw = await mcpTool.call((params ?? {}) as Record<string, unknown>);
         const { sanitized } = redactSecretsInOutput(vault.redact(raw));
         return { content: [{ type: 'text', text: sanitized }], details: {} };
       },
     });
   }
 
-  // Security extension enforcing .env* read fence, bash allowlist, and secret redaction
-  const securityExtension = {
-    name: 'collision-security',
-    onToolCall(event: { toolName: string; input?: Record<string, unknown> }) {
+  // Pi 1.6 ExtensionFactory enforcing .env* read fence, bash allowlist, and output secret redaction
+  const securityExtensionFactory: ExtensionFactory = (extApi) => {
+    extApi.on('tool_call', (event) => {
       const name = event.toolName.toLowerCase();
-      if (name === 'read' || name === 'view') {
-        const target = String(event.input?.path ?? event.input?.file_path ?? '');
-        const blocked = isPathBlockedForModelRead(target, policy);
-        if (blocked) {
-          onEvent({ type: 'tool_blocked', taskId: task.id, tool: event.toolName, reason: blocked });
-          return { block: true, reason: blocked };
+      const inputObj = (event.input ?? {}) as Record<string, unknown>;
+      if (name === 'read' || name === 'view' || name === 'grep' || name === 'find' || name === 'ls') {
+        const target = String(inputObj.path ?? inputObj.file_path ?? '');
+        if (target) {
+          const blocked = isPathBlockedForModelRead(target, policy);
+          if (blocked) {
+            onEvent({ type: 'tool_blocked', taskId: task.id, tool: event.toolName, reason: blocked });
+            return { block: true, reason: blocked };
+          }
         }
       }
       if (name === 'bash' || name === 'exec') {
-        const cmd = String(event.input?.command ?? '');
+        const cmd = String(inputObj.command ?? '');
         const blocked = checkBashCommand(cmd, policy);
         if (blocked) {
           onEvent({ type: 'tool_blocked', taskId: task.id, tool: event.toolName, reason: blocked });
           return { block: true, reason: blocked };
         }
       }
-      onEvent({ type: 'tool_call', taskId: task.id, tool: event.toolName });
+      const detail =
+        typeof inputObj.path === 'string'
+          ? inputObj.path
+          : typeof inputObj.command === 'string'
+            ? inputObj.command
+            : typeof inputObj.id === 'string'
+              ? inputObj.id
+              : typeof inputObj.url === 'string'
+                ? inputObj.url
+                : typeof inputObj.file === 'string'
+                  ? inputObj.file
+                  : undefined;
+      onEvent({ type: 'tool_call', taskId: task.id, tool: event.toolName, detail });
       return undefined;
-    },
+    });
+
+    extApi.on('tool_result', (event) => {
+      if (!Array.isArray(event.content)) return undefined;
+      let changed = false;
+      const sanitizedContent = event.content.map((part) => {
+        if (part.type === 'text' && typeof part.text === 'string') {
+          const { sanitized } = redactSecretsInOutput(vault.redact(part.text));
+          if (sanitized !== part.text) {
+            changed = true;
+            return { ...part, text: sanitized };
+          }
+        }
+        return part;
+      });
+      return changed ? { content: sanitizedContent } : undefined;
+    });
   };
 
-  const resourceLoader = new DefaultResourceLoader({
+  const resourceLoader = new pi.DefaultResourceLoader({
     cwd: profile.projectDir,
+    agentDir: pi.getAgentDir(),
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    extensionFactories: [securityExtensionFactory],
     systemPromptOverride: () => systemPrompt,
-    extensions: [securityExtension],
   });
+  await resourceLoader.reload();
 
-  const { session } = await createAgentSession({
-    model: modelSpec,
-    modelRegistry,
+  const { session } = await pi.createAgentSession({
+    model,
+    modelRuntime,
     thinkingLevel: task.thinkingLevel ?? config.provider.thinkingLevel,
     cwd: profile.projectDir,
-    sessionManager: SessionManager.inMemory(profile.projectDir),
+    sessionManager: pi.SessionManager.inMemory(profile.projectDir),
     resourceLoader,
     customTools,
   });
 
-  const onAbort = () => session.abort?.();
+  const onAbort = () => {
+    void session.abort();
+  };
   input.signal?.addEventListener('abort', onAbort, { once: true });
 
   const unsubscribe = session.subscribe((ev) => {
-    if (ev.type === 'message_update' && typeof ev.delta === 'string') {
-      onEvent({ type: 'assistant_delta', taskId: task.id, text: ev.delta });
+    if (
+      ev.type === 'message_update' &&
+      'assistantMessageEvent' in ev &&
+      ev.assistantMessageEvent.type === 'text_delta'
+    ) {
+      onEvent({
+        type: 'assistant_delta',
+        taskId: task.id,
+        text: ev.assistantMessageEvent.delta,
+      });
     }
   });
 
@@ -408,6 +427,22 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
       .join('\n\n');
 
     await session.prompt(taskPrompt);
+
+    const lastMsg = [...session.messages]
+      .reverse()
+      .find((m) => m.role === 'assistant');
+    if (
+      lastMsg &&
+      'stopReason' in lastMsg &&
+      lastMsg.stopReason === 'error'
+    ) {
+      const errMsg =
+        'errorMessage' in lastMsg && typeof lastMsg.errorMessage === 'string'
+          ? lastMsg.errorMessage
+          : 'Model returned an error response';
+      throw new Error(errMsg);
+    }
+
     const raw = session.getLastAssistantText() || `Completed task: ${task.label}`;
     return redactSecretsInOutput(vault.redact(raw)).sanitized;
   } finally {

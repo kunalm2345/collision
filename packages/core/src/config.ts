@@ -34,6 +34,7 @@ export const McpServerConfigSchema = z.object({
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
   headers: z.record(z.string()).optional(),
+  auth: z.enum(['none', 'bearer']).default('none'),
   installInEditors: z.boolean().default(true),
 });
 

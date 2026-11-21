@@ -93,14 +93,40 @@ export function installMcpIntoEditors(
   servers: McpServerConfig[],
   projectDir: string,
 ): EditorMcpInstallResult[] {
-  const eligible = servers.filter((s) => s.installInEditors && s.url);
+  const eligible = servers.filter(
+    (s) => s.installInEditors && (s.url || s.command),
+  );
   if (eligible.length === 0) return [];
 
   const home = os.homedir();
-  const targets = [
-    { editor: 'Cursor', dir: path.join(home, '.cursor'), file: path.join(home, '.cursor', 'mcp.json'), key: 'mcpServers' },
-    { editor: 'Claude Code', dir: projectDir, file: path.join(projectDir, '.mcp.json'), key: 'mcpServers' },
-    { editor: 'VS Code', dir: path.join(projectDir, '.vscode'), file: path.join(projectDir, '.vscode', 'mcp.json'), key: 'servers' },
+  const targets: Array<{
+    editor: string;
+    dir: string;
+    file: string;
+    key: string;
+    includeHttpType: boolean;
+  }> = [
+    {
+      editor: 'Cursor',
+      dir: path.join(home, '.cursor'),
+      file: path.join(home, '.cursor', 'mcp.json'),
+      key: 'mcpServers',
+      includeHttpType: false,
+    },
+    {
+      editor: 'Claude Code',
+      dir: projectDir,
+      file: path.join(projectDir, '.mcp.json'),
+      key: 'mcpServers',
+      includeHttpType: true,
+    },
+    {
+      editor: 'VS Code',
+      dir: path.join(projectDir, '.vscode'),
+      file: path.join(projectDir, '.vscode', 'mcp.json'),
+      key: 'servers',
+      includeHttpType: true,
+    },
   ];
 
   const results: EditorMcpInstallResult[] = [];
@@ -125,7 +151,13 @@ export function installMcpIntoEditors(
 
     for (const s of eligible) {
       if (!bucket[s.id]) {
-        bucket[s.id] = { url: s.url };
+        if (s.transport === 'stdio' && s.command) {
+          bucket[s.id] = { command: s.command, args: s.args ?? [] };
+        } else if (s.url) {
+          bucket[s.id] = target.includeHttpType
+            ? { type: 'http', url: s.url }
+            : { url: s.url };
+        }
         changed = true;
       }
     }

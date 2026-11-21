@@ -21,6 +21,7 @@ export interface RunCollisionOptions {
   gatewayToken?: string;
   gatewayUrl?: string;
   apiKey?: string;
+  mcpTokens?: Record<string, string>;
   dryRun?: boolean;
   installEditorMcp?: boolean;
   onEvent?: CollisionEventHandler;
@@ -71,7 +72,10 @@ export async function runCollision(
       });
       for (const server of config.mcp.servers) {
         try {
-          const conn = await connectMcpServer(server, options.gatewayToken);
+          const mcpToken =
+            options.mcpTokens?.[server.id] ??
+            (server.auth === 'bearer' ? options.gatewayToken : undefined);
+          const conn = await connectMcpServer(server, mcpToken);
           connectedMcp.push(conn);
           emit({
             type: 'mcp_connected',

@@ -1,9 +1,11 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   checkBashCommand,
+  type CollisionEvent,
   defineConfig,
   isPathBlockedForModelRead,
   planTaskWaves,
@@ -112,5 +114,122 @@ describe('@collision/core task graph & skills', () => {
     const reg = new SkillRegistry();
     await reg.loadSources(config.skills.sources, result.profile);
     expect(reg.listAvailable().map((s) => s.id)).toEqual(['nextjs-app']);
+  });
+
+  it('runs Pi 1.6 agent loop end-to-end with custom tools and security fences', async () => {
+    const dir = makeTempDir();
+    fs.writeFileSync(path.join(dir, '.env'), 'SECRET_KEY=sk-ant-api03-supersecret1234567890abcd\n');
+    const skillsDir = path.join(dir, 'skills');
+    fs.mkdirSync(skillsDir);
+    fs.writeFileSync(
+      path.join(skillsDir, 'setup.md'),
+      '---\nid: setup-guide\ndescription: Setup guide\n---\nRun setup cleanly.',
+    );
+
+    let turn = 0;
+    const sse = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
+    const server = http.createServer((_req, res) => {
+      turn++;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      if (turn === 1) {
+        const calls = [
+          { id: 'c1', name: 'load_skill', args: { id: 'setup-guide' } },
+          { id: 'c2', name: 'read', args: { path: '.env' } },
+          { id: 'c3', name: 'bash', args: { command: 'rm -rf /' } },
+          { id: 'c4', name: 'set_env_values', args: { file: '.env.local', values: { ACME_OK: '1' } } },
+        ];
+        calls.forEach((c, idx) => {
+          res.write(
+            sse({
+              id: 'cmpl-1',
+              object: 'chat.completion.chunk',
+              created: 1,
+              model: 'gpt-4o-mini',
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    role: idx === 0 ? 'assistant' : undefined,
+                    tool_calls: [
+                      {
+                        index: idx,
+                        id: c.id,
+                        type: 'function',
+                        function: { name: c.name, arguments: JSON.stringify(c.args) },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
+                },
+              ],
+            }),
+          );
+        });
+        res.write(
+          sse({
+            id: 'cmpl-1',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: 'gpt-4o-mini',
+            choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+          }),
+        );
+      } else {
+        res.write(
+          sse({
+            id: 'cmpl-2',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: 'gpt-4o-mini',
+            choices: [{ index: 0, delta: { role: 'assistant', content: 'Installed OK.' }, finish_reason: null }],
+          }),
+        );
+        res.write(
+          sse({
+            id: 'cmpl-2',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: 'gpt-4o-mini',
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          }),
+        );
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      const events: CollisionEvent[] = [];
+      const config = defineConfig({
+        vendor: { id: 'acme', name: 'Acme' },
+        provider: { kind: 'gateway', model: 'openai/gpt-4o-mini', gatewayUrl: `http://127.0.0.1:${port}` },
+        skills: { sources: [{ type: 'local', dir: skillsDir }] },
+        prompts: {
+          tasks: [{ id: 'install', label: 'Install Acme', prompt: 'Install Acme now.' }],
+        },
+        mcp: { installIntoEditors: false },
+      });
+
+      const result = await runCollision(config, {
+        projectDir: dir,
+        gatewayToken: 'test-token',
+        onEvent: (ev) => events.push(ev),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.reportMarkdown).toContain('Installed OK.');
+      expect(fs.readFileSync(path.join(dir, '.env.local'), 'utf8')).toContain('ACME_OK=1');
+
+      const blocked = events.filter((e) => e.type === 'tool_blocked');
+      expect(blocked.map((e) => e.tool)).toEqual(['read', 'bash']);
+
+      const loadSkillCalls = events.filter((e) => e.type === 'tool_call' && e.tool === 'load_skill');
+      expect(loadSkillCalls).toHaveLength(1);
+    } finally {
+      server.close();
+    }
   });
 });
