@@ -65,12 +65,23 @@ export function resolveProvider(
     if (overrides?.promptHash) {
       headers['X-Collision-Prompt-Hash'] = overrides.promptHash;
     }
+    let gatewayModelId = modelId;
+    if (modelId.startsWith('openrouter/')) {
+      headers['X-Collision-Provider'] = 'openrouter';
+      gatewayModelId = modelId.slice('openrouter/'.length);
+    } else if (modelId.startsWith('anthropic/')) {
+      headers['X-Collision-Provider'] = 'anthropic';
+      gatewayModelId = modelId.slice('anthropic/'.length);
+    } else if (modelId.startsWith('openai/')) {
+      headers['X-Collision-Provider'] = 'openai';
+      gatewayModelId = modelId.slice('openai/'.length);
+    }
     return {
       providerName: 'collision-gateway',
       api,
       baseUrl: api === 'anthropic-messages' ? gatewayUrl : `${gatewayUrl}/v1`,
       apiKey,
-      modelId,
+      modelId: gatewayModelId,
       headers,
     };
   }

@@ -10,6 +10,7 @@ import {
   isPathBlockedForModelRead,
   planTaskWaves,
   redactSecretsInOutput,
+  resolveProvider,
   runCollision,
   SecretVault,
   SkillRegistry,
@@ -231,5 +232,34 @@ describe('@collision/core task graph & skills', () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe('resolveProvider', () => {
+  it('strips provider prefixes and sets X-Collision-Provider in gateway mode', () => {
+    const base = defineConfig({
+      vendor: { id: 'acme', name: 'Acme' },
+      provider: { kind: 'gateway', model: 'openai/gpt-4o-mini', gatewayUrl: 'http://localhost:8787' },
+    });
+
+    const openai = resolveProvider(base, { gatewayToken: 'tok' });
+    expect(openai.modelId).toBe('gpt-4o-mini');
+    expect(openai.headers['X-Collision-Provider']).toBe('openai');
+    expect(openai.api).toBe('openai-completions');
+
+    const anthropic = resolveProvider(base, {
+      gatewayToken: 'tok',
+      model: 'anthropic/claude-sonnet-4-5',
+    });
+    expect(anthropic.modelId).toBe('claude-sonnet-4-5');
+    expect(anthropic.headers['X-Collision-Provider']).toBe('anthropic');
+    expect(anthropic.api).toBe('anthropic-messages');
+
+    const openrouter = resolveProvider(base, {
+      gatewayToken: 'tok',
+      model: 'openrouter/openai/gpt-4o-mini',
+    });
+    expect(openrouter.modelId).toBe('openai/gpt-4o-mini');
+    expect(openrouter.headers['X-Collision-Provider']).toBe('openrouter');
   });
 });
