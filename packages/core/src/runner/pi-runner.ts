@@ -310,12 +310,23 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
       const name = event.toolName.toLowerCase();
       const inputObj = (event.input ?? {}) as Record<string, unknown>;
       if (name === 'read' || name === 'view' || name === 'grep' || name === 'find' || name === 'ls') {
-        const target = String(inputObj.path ?? inputObj.file_path ?? '');
-        if (target) {
+        const candidates = [
+          inputObj.path,
+          inputObj.file_path,
+          inputObj.glob,
+          inputObj.pattern,
+        ]
+          .filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+        for (const target of candidates) {
           const blocked = isPathBlockedForModelRead(target, policy);
           if (blocked) {
             onEvent({ type: 'tool_blocked', taskId: task.id, tool: event.toolName, reason: blocked });
             return { block: true, reason: blocked };
+          }
+          if ((name === 'grep' || name === 'find') && /(^|[/\\*])\.env(\b|\.)/i.test(target) && !/\.example\b|\.sample\b|\.template\b/i.test(target)) {
+            const reason = `Searching "${target}" is blocked to keep .env secrets off the LLM`;
+            onEvent({ type: 'tool_blocked', taskId: task.id, tool: event.toolName, reason });
+            return { block: true, reason };
           }
         }
       }
@@ -379,6 +390,16 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
     cwd: profile.projectDir,
     sessionManager: pi.SessionManager.inMemory(profile.projectDir),
     resourceLoader,
+    tools: [
+      'read',
+      'bash',
+      'edit',
+      'write',
+      'grep',
+      'find',
+      'ls',
+      ...customTools.map((t) => t.name),
+    ],
     customTools,
   });
 

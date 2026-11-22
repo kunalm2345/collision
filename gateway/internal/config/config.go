@@ -59,7 +59,7 @@ func LoadFromEnv() Config {
 		TokenSigningSecret:     envOr("COLLISION_TOKEN_SECRET", "dev-insecure-change-me"),
 		AdminAPIKey:            os.Getenv("COLLISION_ADMIN_KEY"),
 		DefaultTokenTTL:        time.Duration(envInt("COLLISION_TOKEN_TTL_SECONDS", 900)) * time.Second,
-		MaxTurnsPerRun:         envInt("COLLISION_MAX_TURNS_PER_RUN", 40),
+		MaxTurnsPerRun:         envInt("COLLISION_MAX_TURNS_PER_RUN", 100),
 		MaxRequestsPerMinIP:    envInt("COLLISION_RATE_LIMIT_IP_RPM", 60),
 		MaxRequestsPerMinUser:  envInt("COLLISION_RATE_LIMIT_USER_RPM", 30),
 		MaxConcurrentPerUser:   envInt("COLLISION_MAX_CONCURRENT_USER", 2),

@@ -125,6 +125,7 @@ describe('@collision/core task graph & skills', () => {
   it('runs Pi 1.6 agent loop end-to-end with custom tools and security fences', async () => {
     const dir = makeTempDir();
     fs.writeFileSync(path.join(dir, '.env'), 'SECRET_KEY=sk-ant-api03-supersecret1234567890abcd\n');
+    fs.writeFileSync(path.join(dir, 'app.ts'), 'export const hello = "world";\n');
     const skillsDir = path.join(dir, 'skills');
     fs.mkdirSync(skillsDir);
     fs.writeFileSync(
@@ -142,7 +143,12 @@ describe('@collision/core task graph & skills', () => {
           { id: 'c1', name: 'load_skill', args: { id: 'setup-guide' } },
           { id: 'c2', name: 'read', args: { path: '.env' } },
           { id: 'c3', name: 'bash', args: { command: 'rm -rf /' } },
-          { id: 'c4', name: 'set_env_values', args: { file: '.env.local', values: { ACME_OK: '1' } } },
+          { id: 'c4', name: 'grep', args: { pattern: 'hello', path: 'app.ts' } },
+          { id: 'c5', name: 'grep', args: { pattern: 'SECRET', path: '.env' } },
+          { id: 'c6', name: 'find', args: { pattern: '*.ts' } },
+          { id: 'c7', name: 'find', args: { pattern: '.env*' } },
+          { id: 'c8', name: 'ls', args: { path: '.' } },
+          { id: 'c9', name: 'set_env_values', args: { file: '.env.local', values: { ACME_OK: '1' } } },
         ];
         calls.forEach((c, idx) => {
           res.write(
@@ -230,10 +236,13 @@ describe('@collision/core task graph & skills', () => {
       expect(fs.readFileSync(path.join(dir, '.env.local'), 'utf8')).toContain('ACME_OK=1');
 
       const blocked = events.filter((e) => e.type === 'tool_blocked');
-      expect(blocked.map((e) => e.tool)).toEqual(['read', 'bash']);
+      expect(blocked.map((e) => e.tool)).toEqual(['read', 'bash', 'grep', 'find']);
 
       const loadSkillCalls = events.filter((e) => e.type === 'tool_call' && e.tool === 'load_skill');
       expect(loadSkillCalls).toHaveLength(1);
+      expect(events.filter((e) => e.type === 'tool_call' && e.tool === 'grep')).toHaveLength(1);
+      expect(events.filter((e) => e.type === 'tool_call' && e.tool === 'find')).toHaveLength(1);
+      expect(events.filter((e) => e.type === 'tool_call' && e.tool === 'ls')).toHaveLength(1);
     } finally {
       server.close();
     }
