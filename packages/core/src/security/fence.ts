@@ -74,9 +74,9 @@ export function isPathBlockedForModelRead(
   const base = path.basename(resolved);
   if (
     base.startsWith('.env') &&
-    base !== '.env.example' &&
-    base !== '.env.sample' &&
-    base !== '.env.template'
+    !base.endsWith('.example') &&
+    !base.endsWith('.sample') &&
+    !base.endsWith('.template')
   ) {
     return `Reading "${base}" is blocked to keep secrets off the LLM`;
   }
@@ -116,14 +116,69 @@ export function checkBashCommand(
     ...(policy.allowedBashPrefixes ?? []),
   ];
 
-  const allowed = prefixes.some(
-    (prefix) => trimmed === prefix.trim() || trimmed.startsWith(prefix),
-  );
-  if (!allowed) {
-    return `Command "${trimmed.split(/\s+/)[0]}" is not in the bash allowlist`;
+  // Reject command substitution (`$(...)` or backticks) which can smuggle arbitrary commands.
+  if (/\$\(|`/.test(trimmed)) {
+    return 'Command substitution ($() or backticks) is blocked by Collision security policy';
+  }
+
+  // Split chained shell commands (;, &&, ||, newline) outside quotes and validate every segment.
+  const segments = splitShellSegments(trimmed);
+  for (const segment of segments) {
+    const seg = segment.trim();
+    if (!seg) continue;
+    // Allow simple output pipes to safe read-only filters (head/tail) on the right-hand side.
+    const pipeParts = seg.split('|').map((p) => p.trim());
+    const primary = pipeParts[0];
+    const allowed = prefixes.some(
+      (prefix) => primary === prefix.trim() || primary.startsWith(prefix),
+    );
+    if (!allowed) {
+      return `Command "${primary.split(/\s+/)[0]}" is not in the bash allowlist`;
+    }
+    for (let i = 1; i < pipeParts.length; i++) {
+      const rhs = pipeParts[i];
+      if (!rhs) continue;
+      const rhsCmd = rhs.split(/\s+/)[0];
+      if (rhsCmd !== 'head' && rhsCmd !== 'tail' && rhsCmd !== 'wc') {
+        return `Piped command "${rhsCmd}" is not in the bash allowlist`;
+      }
+    }
   }
 
   return null;
+}
+
+function splitShellSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    const next = command[i + 1];
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      current += ch;
+    } else if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      current += ch;
+    } else if (!inSingle && !inDouble) {
+      if (ch === ';' || ch === '\n') {
+        segments.push(current);
+        current = '';
+      } else if ((ch === '&' && next === '&') || (ch === '|' && next === '|')) {
+        segments.push(current);
+        current = '';
+        i++;
+      } else {
+        current += ch;
+      }
+    } else {
+      current += ch;
+    }
+  }
+  if (current) segments.push(current);
+  return segments;
 }
 
 export function redactSecretsInOutput(text: string): {
