@@ -174,6 +174,7 @@ export function filterSearchOutput(
   toolName: string,
   text: string,
   policy: SecurityPolicy,
+  baseDir = '.',
 ): { filtered: string; omittedCount: number } {
   const lower = toolName.toLowerCase();
   if (lower !== 'grep' && lower !== 'find' && lower !== 'ls') {
@@ -193,9 +194,14 @@ export function filterSearchOutput(
       if (trimmed) candidate = trimmed;
     }
 
-    if (candidate && isPathBlockedForModelRead(candidate, policy)) {
-      omittedCount++;
-      continue;
+    if (candidate) {
+      const resolvedCandidate = path.isAbsolute(candidate)
+        ? candidate
+        : path.join(baseDir, candidate);
+      if (isPathBlockedForModelRead(resolvedCandidate, policy)) {
+        omittedCount++;
+        continue;
+      }
     }
     kept.push(line);
   }
@@ -499,6 +505,7 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
   }
 
   // Pi 1.6 ExtensionFactory enforcing .env* read fence, bash allowlist, and output secret redaction
+  const searchBaseByCallId = new Map<string, string>();
   const securityExtensionFactory: ExtensionFactory = (extApi) => {
     extApi.on('tool_call', (event) => {
       const name = event.toolName.toLowerCase();
@@ -522,6 +529,13 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
             onEvent({ type: 'tool_blocked', taskId: task.id, tool: event.toolName, reason });
             return { block: true, reason };
           }
+        }
+        if (name === 'grep' || name === 'find' || name === 'ls') {
+          const baseDir =
+            typeof inputObj.path === 'string' && inputObj.path.trim()
+              ? inputObj.path.trim()
+              : '.';
+          searchBaseByCallId.set(event.toolCallId, baseDir);
         }
       }
       if (name === 'bash' || name === 'exec') {
@@ -549,12 +563,14 @@ export async function runTaskWithPi(input: PiTaskInput): Promise<string> {
     });
 
     extApi.on('tool_result', (event) => {
+      const searchBase = searchBaseByCallId.get(event.toolCallId) ?? '.';
+      searchBaseByCallId.delete(event.toolCallId);
       if (!Array.isArray(event.content)) return undefined;
       let changed = false;
       const sanitizedContent = event.content.map((part) => {
         if (part.type === 'text' && typeof part.text === 'string') {
           let nextText = part.text;
-          const searchFiltered = filterSearchOutput(event.toolName, nextText, policy);
+          const searchFiltered = filterSearchOutput(event.toolName, nextText, policy, searchBase);
           if (searchFiltered.omittedCount > 0) {
             onEvent({
               type: 'tool_blocked',
