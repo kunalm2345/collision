@@ -2,6 +2,7 @@ import path from 'node:path';
 import { detectProject, type ProjectProfile } from '@collision/detect';
 import type { CollisionConfig } from '../config.js';
 import type { AskUserHandler, CollisionEventHandler } from '../events.js';
+import { runOAuthPkceLogin, type OAuthPkceLoginOptions } from '../auth/oauth-pkce.js';
 import {
   connectMcpServer,
   installMcpIntoEditors,
@@ -22,6 +23,9 @@ export interface RunCollisionOptions {
   gatewayUrl?: string;
   apiKey?: string;
   mcpTokens?: Record<string, string>;
+  /** Override automatic OAuth PKCE login when config.auth is configured */
+  runOAuth?: boolean;
+  oauthOptions?: OAuthPkceLoginOptions;
   dryRun?: boolean;
   installEditorMcp?: boolean;
   onEvent?: CollisionEventHandler;
@@ -56,13 +60,46 @@ export async function runCollision(
 
     emit({ type: 'phase', phase: 'loading_skills', message: 'Loading vendor skills & docs' });
     const skills = new SkillRegistry();
-    await skills.loadSources(config.skills.sources, profile);
+    await skills.loadSources(config.skills.sources, profile, {
+      scanRemoteContent: config.security.scanRemoteContent,
+    });
     const available = skills.listAvailable();
     emit({
       type: 'skills_loaded',
       count: available.length,
       ids: available.map((s) => s.id),
     });
+
+    let effectiveGatewayToken = options.gatewayToken;
+    let oauthAccessToken: string | undefined;
+
+    const shouldRunOAuth =
+      !options.dryRun &&
+      config.auth?.type === 'oauth-pkce' &&
+      !effectiveGatewayToken &&
+      (options.runOAuth ?? Boolean(options.oauthOptions || process.stdout.isTTY));
+
+    if (shouldRunOAuth && config.auth) {
+      emit({
+        type: 'phase',
+        phase: 'authenticating',
+        message: `Signing in to ${config.vendor.name} via browser OAuth`,
+      });
+      const oauthResult = await runOAuthPkceLogin(config.auth, {
+        ...options.oauthOptions,
+        signal: options.signal,
+        onAuthUrl: (url) => {
+          emit({
+            type: 'log',
+            level: 'info',
+            message: `Open to authenticate: ${url}`,
+          });
+          options.oauthOptions?.onAuthUrl?.(url);
+        },
+      });
+      oauthAccessToken = oauthResult.accessToken;
+      effectiveGatewayToken = oauthResult.gatewayToken ?? effectiveGatewayToken;
+    }
 
     if (config.mcp.servers.length > 0 && !options.dryRun) {
       emit({
@@ -74,7 +111,9 @@ export async function runCollision(
         try {
           const mcpToken =
             options.mcpTokens?.[server.id] ??
-            (server.auth === 'bearer' ? options.gatewayToken : undefined);
+            (server.auth === 'bearer'
+              ? oauthAccessToken ?? effectiveGatewayToken
+              : undefined);
           const conn = await connectMcpServer(server, mcpToken);
           connectedMcp.push(conn);
           emit({
@@ -140,7 +179,7 @@ export async function runCollision(
               vault,
               onEvent: emit,
               askUser: options.askUser,
-              gatewayToken: options.gatewayToken,
+              gatewayToken: effectiveGatewayToken,
               gatewayUrl: options.gatewayUrl,
               apiKey: options.apiKey,
               signal: options.signal,

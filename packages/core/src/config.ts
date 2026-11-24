@@ -49,6 +49,20 @@ export const TaskDefinitionSchema = z.object({
   allowedTools: z.array(z.string()).optional(),
 });
 
+export const OAuthPkceConfigSchema = z.object({
+  type: z.literal('oauth-pkce'),
+  authorizeUrl: z.string().url(),
+  tokenUrl: z.string().url(),
+  clientId: z.string().min(1),
+  scopes: z.array(z.string()).default([]),
+  redirectPort: z.number().int().min(0).max(65535).default(0),
+  callbackPath: z.string().default('/callback'),
+  audience: z.string().optional(),
+  extraAuthorizeParams: z.record(z.string()).default({}),
+  timeoutMs: z.number().int().min(5_000).max(600_000).default(180_000),
+  gatewayExchangeUrl: z.string().url().optional(),
+});
+
 export const CollisionConfigSchema = z.object({
   vendor: z.object({
     id: z.string().min(1),
@@ -58,6 +72,7 @@ export const CollisionConfigSchema = z.object({
     docsUrl: z.string().url().optional(),
     llmsTxtUrl: z.string().url().optional(),
   }),
+  auth: OAuthPkceConfigSchema.optional(),
   provider: z
     .object({
       kind: ProviderKindSchema.default('gateway'),
@@ -113,6 +128,7 @@ export type CollisionConfig = z.output<typeof CollisionConfigSchema> & {
   detectors?: FrameworkDetector[];
 };
 
+export type OAuthPkceConfig = z.output<typeof OAuthPkceConfigSchema>;
 export type SkillSource = z.output<typeof SkillSourceSchema>;
 export type McpServerConfig = z.output<typeof McpServerConfigSchema>;
 export type TaskDefinition = z.output<typeof TaskDefinitionSchema>;

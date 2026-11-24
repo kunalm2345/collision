@@ -1,5 +1,6 @@
 export * from './config.js';
 export * from './events.js';
+export * from './auth/oauth-pkce.js';
 export * from './security/secret-vault.js';
 export * from './security/fence.js';
 export * from './skills/loader.js';

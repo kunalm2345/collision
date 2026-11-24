@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 const DEFAULT_BLOCKED_BASENAMES = new Set([
@@ -60,7 +61,7 @@ const UNTRUSTED_CONTENT_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   },
   {
     name: 'prompt-injection-exfiltrate-env',
-    regex: /\b(?:exfiltrate|send|post|upload|leak)\b[^\n]{0,80}\.env\b/i,
+    regex: /\b(?:exfiltrate|send|post|upload|leak)\b[^\n]{0,80}(?:^|[\s"'`/\\])\.env(?![\w.-]*\.(?:example|sample|template)\b)(?:\b|\.)/i,
   },
   {
     name: 'remote-shell-pipe',
@@ -83,35 +84,63 @@ export interface SecurityPolicy {
   allowedBashPrefixes?: string[];
 }
 
-export function isPathBlockedForModelRead(
+function checkSingleResolvedPath(
   targetPath: string,
+  resolved: string,
+  projectRoot: string,
   policy: SecurityPolicy,
 ): string | null {
-  const resolved = path.resolve(policy.projectDir, targetPath);
-  const rel = path.relative(policy.projectDir, resolved);
+  const rel = path.relative(projectRoot, resolved);
 
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
     return `Path "${targetPath}" escapes the project directory`;
   }
 
   const base = path.basename(resolved);
+  const baseLower = base.toLowerCase();
   if (
-    base.startsWith('.env') &&
-    !base.endsWith('.example') &&
-    !base.endsWith('.sample') &&
-    !base.endsWith('.template')
+    baseLower.startsWith('.env') &&
+    !baseLower.endsWith('.example') &&
+    !baseLower.endsWith('.sample') &&
+    !baseLower.endsWith('.template')
   ) {
     return `Reading "${base}" is blocked to keep secrets off the LLM`;
   }
 
-  if (DEFAULT_BLOCKED_BASENAMES.has(base)) {
+  if (DEFAULT_BLOCKED_BASENAMES.has(baseLower)) {
     return `Reading "${base}" is blocked by Collision security policy`;
   }
 
+  const relLower = rel.toLowerCase();
   for (const extra of policy.extraBlockedPaths ?? []) {
-    if (rel === extra || rel.startsWith(`${extra}${path.sep}`)) {
+    const extraLower = extra.toLowerCase();
+    if (relLower === extraLower || relLower.startsWith(`${extraLower}${path.sep}`)) {
       return `Reading "${rel}" is blocked by vendor security policy`;
     }
+  }
+
+  return null;
+}
+
+export function isPathBlockedForModelRead(
+  targetPath: string,
+  policy: SecurityPolicy,
+): string | null {
+  const projectRoot = path.resolve(policy.projectDir);
+  const resolved = path.resolve(projectRoot, targetPath);
+
+  const directCheck = checkSingleResolvedPath(targetPath, resolved, projectRoot, policy);
+  if (directCheck) return directCheck;
+
+  try {
+    if (fs.existsSync(resolved)) {
+      const realRoot = fs.existsSync(projectRoot) ? fs.realpathSync(projectRoot) : projectRoot;
+      const realTarget = fs.realpathSync(resolved);
+      const realCheck = checkSingleResolvedPath(targetPath, realTarget, realRoot, policy);
+      if (realCheck) return realCheck;
+    }
+  } catch {
+    return `Path "${targetPath}" could not be safely resolved`;
   }
 
   return null;
@@ -226,8 +255,10 @@ export function scanUntrustedContent(text: string): {
   findings: string[];
 } {
   const findings: string[] = [];
+  const normalized = text.normalize('NFKC');
   for (const { name, regex } of UNTRUSTED_CONTENT_PATTERNS) {
-    if (regex.test(text)) {
+    const subject = name === 'zero-width-obfuscation' ? text : normalized;
+    if (regex.test(subject)) {
       findings.push(name);
     }
   }
