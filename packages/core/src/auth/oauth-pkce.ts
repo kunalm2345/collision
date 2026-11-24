@@ -262,6 +262,12 @@ export async function runOAuthPkceLogin(
     const code = reqUrl.searchParams.get('code');
     const returnedState = reqUrl.searchParams.get('state');
 
+    if (!returnedState || !timingSafeEquals(returnedState, state)) {
+      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(CALLBACK_ERROR_HTML);
+      return;
+    }
+
     if (oauthError) {
       res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(CALLBACK_ERROR_HTML);
@@ -269,10 +275,9 @@ export async function runOAuthPkceLogin(
       return;
     }
 
-    if (!code || !returnedState || !timingSafeEquals(returnedState, state)) {
+    if (!code) {
       res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(CALLBACK_ERROR_HTML);
-      finishReject(new Error('OAuth callback missing code or state mismatch'));
       return;
     }
 

@@ -513,13 +513,20 @@ describe('OAuth PKCE helper', () => {
     }
   });
 
-  it('rejects callback with mismatched state', async () => {
-    await expect(
-      runOAuthPkceLogin(
+  it('ignores callback with mismatched state without cancelling active login', async () => {
+    const tokenServer = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ access_token: 'tok-after-bad-state', token_type: 'Bearer' }));
+    });
+    await new Promise<void>((resolve) => tokenServer.listen(0, '127.0.0.1', resolve));
+    const port = (tokenServer.address() as { port: number }).port;
+
+    try {
+      const result = await runOAuthPkceLogin(
         {
           type: 'oauth-pkce',
-          authorizeUrl: 'http://127.0.0.1:9999/authorize',
-          tokenUrl: 'http://127.0.0.1:9999/token',
+          authorizeUrl: `http://127.0.0.1:${port}/authorize`,
+          tokenUrl: `http://127.0.0.1:${port}/token`,
           clientId: 'cli',
           scopes: [],
           redirectPort: 0,
@@ -530,12 +537,23 @@ describe('OAuth PKCE helper', () => {
         {
           allowInsecureLocalhost: true,
           openBrowser: async (authUrl) => {
-            const redirectUri = new URL(authUrl).searchParams.get('redirect_uri')!;
-            const cbRes = await fetch(`${redirectUri}?code=abc&state=wrong-state`);
-            expect(cbRes.status).toBe(400);
+            const u = new URL(authUrl);
+            const redirectUri = u.searchParams.get('redirect_uri')!;
+            const realState = u.searchParams.get('state')!;
+            const badRes = await fetch(`${redirectUri}?code=abc&state=wrong-state`);
+            expect(badRes.status).toBe(400);
+            const errRes = await fetch(`${redirectUri}?error=access_denied&state=wrong-state`);
+            expect(errRes.status).toBe(400);
+            const okRes = await fetch(
+              `${redirectUri}?code=real-code&state=${encodeURIComponent(realState)}`,
+            );
+            expect(okRes.status).toBe(200);
           },
         },
-      ),
-    ).rejects.toThrow(/state mismatch/i);
+      );
+      expect(result.accessToken).toBe('tok-after-bad-state');
+    } finally {
+      tokenServer.close();
+    }
   });
 });
