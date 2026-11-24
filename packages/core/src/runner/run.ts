@@ -70,7 +70,8 @@ export async function runCollision(
       ids: available.map((s) => s.id),
     });
 
-    let effectiveGatewayToken = options.gatewayToken;
+    let effectiveGatewayToken =
+      options.gatewayToken ?? process.env.COLLISION_GATEWAY_TOKEN;
     let oauthAccessToken: string | undefined;
 
     const shouldRunOAuth =
