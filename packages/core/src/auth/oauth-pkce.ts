@@ -22,7 +22,7 @@ export interface OAuthPkceLoginOptions {
   openBrowser?: (url: string) => void | Promise<void>;
   onAuthUrl?: (url: string) => void;
   /** Optional fallback for SSH/headless users to paste the callback URL or authorization code */
-  promptForCode?: (authorizeUrl: string) => Promise<string | null>;
+  promptForCode?: (authorizeUrl: string, signal?: AbortSignal) => Promise<string | null>;
   signal?: AbortSignal;
   /** Allow http://localhost or http://127.0.0.1 endpoints (intended for local dev & tests) */
   allowInsecureLocalhost?: boolean;
@@ -306,6 +306,7 @@ export async function runOAuthPkceLogin(
   });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const promptAbort = new AbortController();
   const onAbort = () => {
     finishReject(new Error('OAuth login aborted'));
   };
@@ -335,7 +336,7 @@ export async function runOAuthPkceLogin(
     await opener(authorizeUrl);
 
     if (options.promptForCode) {
-      void options.promptForCode(authorizeUrl).then(
+      void options.promptForCode(authorizeUrl, promptAbort.signal).then(
         (pasted) => {
           if (!pasted || settled) return;
           const parsed = parsePastedCodeOrUrl(pasted, state);
@@ -360,6 +361,7 @@ export async function runOAuthPkceLogin(
     });
   } finally {
     if (timer) clearTimeout(timer);
+    promptAbort.abort();
     options.signal?.removeEventListener('abort', onAbort);
     server.close();
   }

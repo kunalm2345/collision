@@ -97,15 +97,28 @@ export function createInstaller(configInput: CollisionConfigInput) {
       );
       const headlessPromptForCode =
         useHeadless && !cliOpts.json && process.stdin.isTTY && isRemoteSession
-          ? async (_authorizeUrl: string) =>
+          ? async (_authorizeUrl: string, signal?: AbortSignal) =>
               new Promise<string | null>((resolve) => {
+                if (signal?.aborted) {
+                  resolve(null);
+                  return;
+                }
                 const rl = readline.createInterface({
                   input: process.stdin,
                   output: process.stdout,
                 });
-                rl.question('Paste the OAuth callback URL or authorization code: ', (answer) => {
+                let done = false;
+                const finish = (value: string | null) => {
+                  if (done) return;
+                  done = true;
+                  signal?.removeEventListener('abort', onAbort);
                   rl.close();
-                  resolve(answer.trim() || null);
+                  resolve(value);
+                };
+                const onAbort = () => finish(null);
+                signal?.addEventListener('abort', onAbort, { once: true });
+                rl.question('Paste the OAuth callback URL or authorization code: ', (answer) => {
+                  finish(answer.trim() || null);
                 });
               })
           : undefined;
