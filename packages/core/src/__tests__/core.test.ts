@@ -8,6 +8,7 @@ import {
   checkBashCommand,
   checkEnvKeysInProject,
   type CollisionEvent,
+  connectMcpServer,
   defineConfig,
   fetchAllowlistedDoc,
   filterSearchOutput,
@@ -555,5 +556,54 @@ describe('OAuth PKCE helper', () => {
     } finally {
       tokenServer.close();
     }
+  });
+
+  it('rejects insecure HTTP authorizeUrl immediately without leaking callback server', async () => {
+    await expect(
+      runOAuthPkceLogin({
+        type: 'oauth-pkce',
+        authorizeUrl: 'http://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        clientId: 'cli',
+        scopes: [],
+        redirectPort: 0,
+        callbackPath: '/callback',
+        extraAuthorizeParams: {},
+        timeoutMs: 10_000,
+      }),
+    ).rejects.toThrow(/must use https/i);
+  });
+
+  it('refuses to send bearer token to non-HTTPS remote MCP server', async () => {
+    await expect(
+      connectMcpServer(
+        {
+          id: 'remote-http',
+          transport: 'http',
+          url: 'http://mcp.example.com/mcp',
+          auth: 'bearer',
+          installInEditors: false,
+        },
+        'oauth-secret-token',
+      ),
+    ).rejects.toThrow(/non-HTTPS MCP server/i);
+  });
+
+  it('filters protected vendor paths inside nested search directories', () => {
+    const dir = makeTempDir();
+    const out = filterSearchOutput(
+      'grep',
+      ['app.ts:1:ok', 'secret.key:1:PRIVATE'].join('\n'),
+      {
+        projectDir: dir,
+        allowBash: false,
+        extraBlockedPaths: ['config/secret.key'],
+        allowedBashPrefixes: [],
+      },
+      'config',
+    );
+    expect(out.omittedCount).toBe(1);
+    expect(out.filtered).not.toContain('PRIVATE');
+    expect(out.filtered).toContain('app.ts:1:ok');
   });
 });
