@@ -85,8 +85,21 @@ export async function runCollision(
         phase: 'authenticating',
         message: `Signing in to ${config.vendor.name} via browser OAuth`,
       });
+      const isRemoteSession = Boolean(
+        process.env.SSH_CONNECTION || process.env.SSH_CLIENT || process.env.SSH_TTY,
+      );
+      const fallbackPromptForCode =
+        !options.oauthOptions?.promptForCode && isRemoteSession && options.askUser
+          ? async (url: string) => {
+              const answer = await options.askUser!({
+                question: `Paste the OAuth callback URL or authorization code after signing in (${url}):`,
+              });
+              return answer.trim() || null;
+            }
+          : undefined;
       const oauthResult = await runOAuthPkceLogin(config.auth, {
         ...options.oauthOptions,
+        promptForCode: options.oauthOptions?.promptForCode ?? fallbackPromptForCode,
         signal: options.signal,
         onAuthUrl: (url) => {
           emit({
