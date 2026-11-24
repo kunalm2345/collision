@@ -74,7 +74,9 @@ export async function runCollision(
     let oauthAccessToken: string | undefined;
 
     const hasGatewayCredential = Boolean(
-      options.gatewayToken || options.apiKey || process.env.COLLISION_GATEWAY_TOKEN,
+      options.gatewayToken ||
+        process.env.COLLISION_GATEWAY_TOKEN ||
+        (config.provider.kind === 'gateway' && options.apiKey),
     );
     const shouldRunOAuth =
       !options.dryRun &&
