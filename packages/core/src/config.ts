@@ -62,6 +62,7 @@ export const CollisionConfigSchema = z.object({
     .object({
       kind: ProviderKindSchema.default('gateway'),
       model: z.string().default('anthropic/claude-sonnet-4-5'),
+      taskModels: z.record(z.string()).default({}),
       gatewayUrl: z.string().url().optional(),
       apiKeyEnv: z.string().optional(),
       thinkingLevel: z
@@ -97,6 +98,7 @@ export const CollisionConfigSchema = z.object({
   security: z
     .object({
       allowBash: z.boolean().default(true),
+      scanRemoteContent: z.boolean().default(true),
       extraBlockedPaths: z.array(z.string()).default([]),
       allowedBashPrefixes: z.array(z.string()).default([]),
     })

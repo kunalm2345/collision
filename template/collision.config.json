@@ -9,6 +9,10 @@
   "provider": {
     "kind": "openai",
     "model": "gpt-5.4-mini",
+    "taskModels": {
+      "install": "gpt-5.4-mini",
+      "verify": "gpt-5.4"
+    },
     "thinkingLevel": "medium"
   },
   "prompts": {

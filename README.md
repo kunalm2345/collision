@@ -23,8 +23,27 @@ template/    Vendor-neutral starter pack (config, skills, branded CLI entry)
 3. **Skills & Docs (`@collision/core`):** Loads matching Markdown skills from local directories, URLs, or a remote JSON skill menu, and lets the agent fetch vendor docs on demand.
 4. **MCP & CLI:** Auto-connects the vendor's remote HTTP or stdio MCP server during the run and optionally registers it in Cursor, Claude Code, and VS Code.
 5. **Task Graph + Pi Loop:** Runs a dependency-ordered task graph (`install` -> `configure` -> `verify` -> `report`) via `@earendil-works/pi-coding-agent` with parallel waves for independent tasks.
-6. **Client-side Security:** Hard-blocks `.env*` and credential file reads, keeps user-entered secrets in an in-memory `SecretVault` (`secret:<uuid>` handles), enforces a bash allowlist, and redacts leaked key patterns from tool output.
-7. **Go Gateway (`gateway/`):** Proxies OpenAI, Anthropic, and OpenRouter streams behind HMAC-signed short-lived run tokens, disposable-email blocking, system-prompt hash admission, model allowlists, per-IP/per-user rate limits, concurrency caps, and per-run turn budgets.
+6. **Client-side Security:** Hard-blocks `.env*` and credential file reads (including `grep`/`find`/`ls`), exposes `check_env_keys` + `set_env_values` so secrets stay local, keeps user-entered secrets in an in-memory `SecretVault` (`secret:<uuid>` handles), enforces a bash allowlist, scans remote skills/docs/tool outputs for prompt-injection patterns, and redacts leaked key patterns.
+7. **Go Gateway (`gateway/`):** Proxies OpenAI, Anthropic, and OpenRouter streams behind HMAC-signed short-lived run tokens, disposable-email blocking, system-prompt hash admission, model allowlists, per-IP/per-user rate limits, concurrency caps, and per-run turn budgets (default `100`).
+
+## What Collision Handles vs. What You Bring
+
+Collision intentionally stays vendor-neutral. It provides the local agent harness, security boundaries, and LLM gateway, while leaving product auth and backend logic to your stack:
+
+| Concern | Handled by Collision | Built & hosted by you |
+|---|---|---|
+| **Local agent & TUI** | Pi loop, task graph, per-task model routing (`provider.taskModels`), Ink TUI + headless CI | Branded wrapper via `createInstaller(config)` (e.g. `npx @your-org/install`) |
+| **Detection & skills** | Framework/package-manager detection, local/URL/menu Markdown skill loader, `fetch_doc` | Your framework skills, prompts, and `llms.txt` / docs URLs |
+| **Auth & login screen** | Accepts `gatewayToken` + per-server `mcpTokens` in `runCollision()` | Your OAuth / device-flow login screen & backend that mints gateway tokens via `POST /v1/tokens` |
+| **Product MCP / CLI** | Connects HTTP/stdio MCP servers during the run & installs them into Cursor/Claude Code/VS Code | Your remote MCP server & product-specific tools (e.g. creating projects, dashboards, API keys) |
+| **LLM gateway & anti-spam** | Go proxy (`gateway/`), rate limits, turn budgets, prompt-hash & model allowlists, disposable-email block | Hosting the gateway binary + supplying upstream OpenAI/Anthropic/OpenRouter keys |
+
+### Vendor Setup Checklist
+
+1. **Copy `template/`** and customize `collision.config.json` (vendor metadata, `provider.model` / `provider.taskModels`, `skills.sources`, `mcp.servers`, and `prompts.tasks`).
+2. **Add your own OAuth / login flow** (if you want zero-copy-paste project tokens or hosted LLM access): authenticate the user against your backend, call `POST /v1/tokens` on the Collision Go gateway with `COLLISION_ADMIN_KEY`, and pass the returned `token` (plus any `mcpTokens`) into `runCollision()`.
+3. **Wire your MCP server (optional):** expose tools for creating product resources (projects, dashboards, webhooks) and list the server under `mcp.servers` with `auth: "bearer"` (or `"none"` for public docs MCPs).
+4. **Publish your branded CLI** using `createInstaller(config)` from `collision` (see `template/installer.ts`).
 
 ## Quick Start
 

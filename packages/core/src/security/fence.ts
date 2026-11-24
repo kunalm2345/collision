@@ -53,6 +53,29 @@ const SECRET_OUTPUT_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   },
 ];
 
+const UNTRUSTED_CONTENT_PATTERNS: Array<{ name: string; regex: RegExp }> = [
+  {
+    name: 'prompt-injection-ignore-instructions',
+    regex: /\b(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|above|system|developer)\s+(?:instructions|prompts|rules)\b/i,
+  },
+  {
+    name: 'prompt-injection-exfiltrate-env',
+    regex: /\b(?:exfiltrate|send|post|upload|leak)\b[^\n]{0,80}\.env\b/i,
+  },
+  {
+    name: 'remote-shell-pipe',
+    regex: /\b(?:curl|wget)\b[^\n|]{0,120}\|\s*(?:sh|bash|zsh)\b/i,
+  },
+  {
+    name: 'encoded-shell-exec',
+    regex: /\bbase64\s+(?:-d|--decode)\b[^\n|]{0,80}\|\s*(?:sh|bash|zsh)\b/i,
+  },
+  {
+    name: 'zero-width-obfuscation',
+    regex: /[\u200B-\u200D\uFEFF]{6,}/,
+  },
+];
+
 export interface SecurityPolicy {
   projectDir: string;
   allowBash: boolean;
@@ -196,4 +219,17 @@ export function redactSecretsInOutput(text: string): {
   }
 
   return { sanitized, findings };
+}
+
+export function scanUntrustedContent(text: string): {
+  safe: boolean;
+  findings: string[];
+} {
+  const findings: string[] = [];
+  for (const { name, regex } of UNTRUSTED_CONTENT_PATTERNS) {
+    if (regex.test(text)) {
+      findings.push(name);
+    }
+  }
+  return { safe: findings.length === 0, findings };
 }

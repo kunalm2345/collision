@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ProjectProfile } from '@collision/detect';
 import type { SkillSource } from '../config.js';
+import { scanUntrustedContent } from '../security/fence.js';
 
 export interface LoadedSkill {
   id: string;
@@ -113,7 +114,10 @@ export class SkillRegistry {
     return [...out.entries()].map(([id, description]) => ({ id, description }));
   }
 
-  async get(id: string): Promise<LoadedSkill | null> {
+  async get(
+    id: string,
+    opts?: { scanRemoteContent?: boolean },
+  ): Promise<LoadedSkill | null> {
     const cached = this.skills.get(id);
     if (cached) return cached;
 
@@ -125,6 +129,14 @@ export class SkillRegistry {
       throw new Error(`Failed to fetch skill "${id}" from ${remote.url}: ${res.status}`);
     }
     const raw = await res.text();
+    if (opts?.scanRemoteContent !== false) {
+      const scan = scanUntrustedContent(raw);
+      if (!scan.safe) {
+        throw new Error(
+          `Blocked remote skill "${id}" from ${remote.url}: failed security scan (${scan.findings.join(', ')})`,
+        );
+      }
+    }
     const { body } = parseFrontmatter(raw);
     const loaded: LoadedSkill = {
       id: remote.id,
