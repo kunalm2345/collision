@@ -33,11 +33,19 @@ export async function connectMcpServer(
     if (!server.url) {
       throw new Error(`MCP server "${server.id}" requires a url for http transport`);
     }
+    const parsedUrl = new URL(server.url);
     const headers: Record<string, string> = { ...(server.headers ?? {}) };
     if (authToken && !headers.Authorization) {
+      const isLocalhost =
+        parsedUrl.hostname === '127.0.0.1' || parsedUrl.hostname === 'localhost';
+      if (parsedUrl.protocol !== 'https:' && !isLocalhost) {
+        throw new Error(
+          `Refusing to send bearer token to non-HTTPS MCP server "${server.id}" (${parsedUrl.protocol}//${parsedUrl.host})`,
+        );
+      }
       headers.Authorization = `Bearer ${authToken}`;
     }
-    const transport = new StreamableHTTPClientTransport(new URL(server.url), {
+    const transport = new StreamableHTTPClientTransport(parsedUrl, {
       requestInit: { headers },
     });
     await client.connect(transport);
