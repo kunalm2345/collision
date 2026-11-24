@@ -70,15 +70,19 @@ export async function runCollision(
       ids: available.map((s) => s.id),
     });
 
-    let effectiveGatewayToken =
-      options.gatewayToken ?? process.env.COLLISION_GATEWAY_TOKEN;
+    let effectiveGatewayToken = options.gatewayToken;
     let oauthAccessToken: string | undefined;
 
+    const hasGatewayCredential = Boolean(
+      options.gatewayToken || options.apiKey || process.env.COLLISION_GATEWAY_TOKEN,
+    );
     const shouldRunOAuth =
       !options.dryRun &&
       config.auth?.type === 'oauth-pkce' &&
-      !effectiveGatewayToken &&
-      (options.runOAuth ?? Boolean(options.oauthOptions || process.stdout.isTTY));
+      (options.runOAuth === true ||
+        (options.runOAuth !== false &&
+          !hasGatewayCredential &&
+          Boolean(options.oauthOptions || process.stdout.isTTY)));
 
     if (shouldRunOAuth && config.auth) {
       emit({
