@@ -223,6 +223,17 @@ export async function runOAuthPkceLogin(
   config: OAuthPkceConfig,
   options: OAuthPkceLoginOptions = {},
 ): Promise<OAuthTokenResult> {
+  // Validate OAuth endpoint URLs before binding the loopback server
+  assertAllowedEndpointUrl(config.authorizeUrl, 'authorizeUrl', options.allowInsecureLocalhost);
+  assertAllowedEndpointUrl(config.tokenUrl, 'tokenUrl', options.allowInsecureLocalhost);
+  if (config.gatewayExchangeUrl) {
+    assertAllowedEndpointUrl(
+      config.gatewayExchangeUrl,
+      'gatewayExchangeUrl',
+      options.allowInsecureLocalhost,
+    );
+  }
+
   const { codeVerifier, codeChallenge, state } = generatePkcePair();
   const callbackPath = config.callbackPath.startsWith('/')
     ? config.callbackPath
@@ -294,30 +305,31 @@ export async function runOAuthPkceLogin(
     });
   });
 
-  const addr = server.address();
-  if (!addr || typeof addr === 'string') {
-    server.close();
-    throw new Error('Failed to bind local OAuth callback server');
-  }
-
-  const redirectUri = `http://127.0.0.1:${addr.port}${callbackPath}`;
-  const authorizeUrl = buildAuthorizeUrl(config, {
-    redirectUri,
-    codeChallenge,
-    state,
-    allowInsecureLocalhost: options.allowInsecureLocalhost,
-  });
-
-  const timer = setTimeout(() => {
-    finishReject(new Error(`OAuth login timed out after ${Math.round(config.timeoutMs / 1000)}s`));
-  }, config.timeoutMs);
-
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const onAbort = () => {
     finishReject(new Error('OAuth login aborted'));
   };
-  options.signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
+    const addr = server.address();
+    if (!addr || typeof addr === 'string') {
+      throw new Error('Failed to bind local OAuth callback server');
+    }
+
+    const redirectUri = `http://127.0.0.1:${addr.port}${callbackPath}`;
+    const authorizeUrl = buildAuthorizeUrl(config, {
+      redirectUri,
+      codeChallenge,
+      state,
+      allowInsecureLocalhost: options.allowInsecureLocalhost,
+    });
+
+    timer = setTimeout(() => {
+      finishReject(new Error(`OAuth login timed out after ${Math.round(config.timeoutMs / 1000)}s`));
+    }, config.timeoutMs);
+
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+
     options.onAuthUrl?.(authorizeUrl);
     const opener = options.openBrowser ?? defaultOpenBrowser;
     await opener(authorizeUrl);
@@ -347,7 +359,7 @@ export async function runOAuthPkceLogin(
       allowInsecureLocalhost: options.allowInsecureLocalhost,
     });
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     options.signal?.removeEventListener('abort', onAbort);
     server.close();
   }
