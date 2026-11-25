@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import {
   CollisionConfigSchema,
@@ -8,6 +9,7 @@ import {
   type CollisionConfig,
   type CollisionConfigInput,
   type CollisionEvent,
+  type OAuthPkceLoginOptions,
   type RunCollisionOptions,
   type RunCollisionResult,
 } from '@collision/core';
@@ -23,6 +25,7 @@ export interface InstallerCliOptions {
   gatewayToken?: string;
   apiKey?: string;
   installEditorMcp?: boolean;
+  oauthOptions?: OAuthPkceLoginOptions;
 }
 
 export async function runHeadless(
@@ -56,6 +59,9 @@ export async function runHeadless(
       case 'tool_blocked':
         process.stderr.write(`[security] blocked ${ev.tool}: ${ev.reason}\n`);
         break;
+      case 'log':
+        process.stdout.write(`[collision] ${ev.message}\n`);
+        break;
       case 'report':
         process.stdout.write(`\n${ev.markdown}\n`);
         break;
@@ -86,6 +92,37 @@ export function createInstaller(configInput: CollisionConfigInput) {
         !process.stdout.isTTY ||
         process.env.CI === 'true';
 
+      const isRemoteSession = Boolean(
+        process.env.SSH_CONNECTION || process.env.SSH_CLIENT || process.env.SSH_TTY,
+      );
+      const headlessPromptForCode =
+        useHeadless && !cliOpts.json && process.stdin.isTTY && isRemoteSession
+          ? async (_authorizeUrl: string, signal?: AbortSignal) =>
+              new Promise<string | null>((resolve) => {
+                if (signal?.aborted) {
+                  resolve(null);
+                  return;
+                }
+                const rl = readline.createInterface({
+                  input: process.stdin,
+                  output: process.stdout,
+                });
+                let done = false;
+                const finish = (value: string | null) => {
+                  if (done) return;
+                  done = true;
+                  signal?.removeEventListener('abort', onAbort);
+                  rl.close();
+                  resolve(value);
+                };
+                const onAbort = () => finish(null);
+                signal?.addEventListener('abort', onAbort, { once: true });
+                rl.question('Paste the OAuth callback URL or authorization code: ', (answer) => {
+                  finish(answer.trim() || null);
+                });
+              })
+          : undefined;
+
       const runOpts: RunCollisionOptions = {
         projectDir: cliOpts.projectDir ?? process.cwd(),
         dryRun: cliOpts.dryRun,
@@ -93,6 +130,14 @@ export function createInstaller(configInput: CollisionConfigInput) {
         gatewayToken: cliOpts.gatewayToken,
         apiKey: cliOpts.apiKey,
         installEditorMcp: cliOpts.installEditorMcp,
+        oauthOptions:
+          cliOpts.oauthOptions || headlessPromptForCode
+            ? {
+                ...cliOpts.oauthOptions,
+                promptForCode:
+                  cliOpts.oauthOptions?.promptForCode ?? headlessPromptForCode,
+              }
+            : undefined,
       };
 
       if (useHeadless) {

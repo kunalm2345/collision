@@ -34,14 +34,14 @@ Collision intentionally stays vendor-neutral. It provides the local agent harnes
 |---|---|---|
 | **Local agent & TUI** | Pi loop, task graph, per-task model routing (`provider.taskModels`), Ink TUI + headless CI | Branded wrapper via `createInstaller(config)` (e.g. `npx @your-org/install`) |
 | **Detection & skills** | Framework/package-manager detection, local/URL/menu Markdown skill loader, `fetch_doc` | Your framework skills, prompts, and `llms.txt` / docs URLs |
-| **Auth & login screen** | Accepts `gatewayToken` + per-server `mcpTokens` in `runCollision()` | Your OAuth / device-flow login screen & backend that mints gateway tokens via `POST /v1/tokens` |
+| **Auth & login screen** | Optional OAuth PKCE CLI helper (`auth: { type: "oauth-pkce" }`) with local callback + paste-code fallback; accepts `gatewayToken` + per-server `mcpTokens` in `runCollision()` | Your OAuth / device-flow login screen & backend that mints gateway tokens via `POST /v1/tokens` |
 | **Product MCP / CLI** | Connects HTTP/stdio MCP servers during the run & installs them into Cursor/Claude Code/VS Code | Your remote MCP server & product-specific tools (e.g. creating projects, dashboards, API keys) |
 | **LLM gateway & anti-spam** | Go proxy (`gateway/`), rate limits, turn budgets, prompt-hash & model allowlists, disposable-email block | Hosting the gateway binary + supplying upstream OpenAI/Anthropic/OpenRouter keys |
 
 ### Vendor Setup Checklist
 
 1. **Copy `template/`** and customize `collision.config.json` (vendor metadata, `provider.model` / `provider.taskModels`, `skills.sources`, `mcp.servers`, and `prompts.tasks`).
-2. **Add your own OAuth / login flow** (if you want zero-copy-paste project tokens or hosted LLM access): authenticate the user against your backend, call `POST /v1/tokens` on the Collision Go gateway with `COLLISION_ADMIN_KEY`, and pass the returned `token` (plus any `mcpTokens`) into `runCollision()`.
+2. **Add your own OAuth / login flow** (if you want zero-copy-paste project tokens or hosted LLM access): set `provider.kind` to `"gateway"` (direct `"openai"`/`"anthropic"`/`"openrouter"` ignores `gatewayToken`), configure `auth: { type: "oauth-pkce", authorizeUrl, tokenUrl, clientId, gatewayExchangeUrl }` (or pass `gatewayToken` / `mcpTokens` directly into `runCollision()`), and have your backend mint short-lived tokens via `POST /v1/tokens` on the Collision Go gateway using `COLLISION_ADMIN_KEY`.
 3. **Wire your MCP server (optional):** expose tools for creating product resources (projects, dashboards, webhooks) and list the server under `mcp.servers` with `auth: "bearer"` (or `"none"` for public docs MCPs).
 4. **Publish your branded CLI** using `createInstaller(config)` from `collision` (see `template/installer.ts`).
 

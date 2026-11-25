@@ -49,19 +49,38 @@ function matchesProfile(
   return true;
 }
 
+function sanitizeSkillMetadata(
+  value: string,
+  scanRemoteContent: boolean,
+): string | null {
+  if (scanRemoteContent && !scanUntrustedContent(value).safe) {
+    return null;
+  }
+  const singleLine = value.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  return singleLine.slice(0, 240);
+}
+
 export class SkillRegistry {
   private readonly skills = new Map<string, LoadedSkill>();
   private readonly remoteMenu = new Map<string, SkillMenuEntry>();
 
-  async loadSources(sources: SkillSource[], profile: ProjectProfile): Promise<void> {
+  async loadSources(
+    sources: SkillSource[],
+    profile: ProjectProfile,
+    opts?: { scanRemoteContent?: boolean },
+  ): Promise<void> {
+    const scanRemote = opts?.scanRemoteContent !== false;
     for (const source of sources) {
       if (source.type === 'local') {
         this.loadLocalDirectory(source.dir, profile);
       } else if (source.type === 'url') {
         if (matchesProfile(source.match, profile)) {
-          this.remoteMenu.set(source.id, {
-            id: source.id,
-            description: source.description,
+          const safeId = sanitizeSkillMetadata(source.id, scanRemote);
+          const safeDesc = sanitizeSkillMetadata(source.description, scanRemote);
+          if (!safeId || !safeDesc) continue;
+          this.remoteMenu.set(safeId, {
+            id: safeId,
+            description: safeDesc,
             url: source.url,
             match: source.match,
           });
@@ -72,7 +91,14 @@ export class SkillRegistry {
         const json = (await res.json()) as { skills?: SkillMenuEntry[] };
         for (const entry of json.skills ?? []) {
           if (matchesProfile(entry.match, profile)) {
-            this.remoteMenu.set(entry.id, entry);
+            const safeId = sanitizeSkillMetadata(entry.id, scanRemote);
+            const safeDesc = sanitizeSkillMetadata(entry.description, scanRemote);
+            if (!safeId || !safeDesc) continue;
+            this.remoteMenu.set(safeId, {
+              ...entry,
+              id: safeId,
+              description: safeDesc,
+            });
           }
         }
       }
